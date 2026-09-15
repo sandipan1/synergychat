@@ -11,10 +11,6 @@ on:
           - stage
           - prod
         default: stage
-      image_tag:
-        description: Full application image commit SHA to promote
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -33,9 +29,49 @@ jobs:
           path: devops-repo
           ref: main
 
+      - name: Determine image tag from source environment
+        id: release
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        working-directory: devops-repo
+        run: |
+          set -euo pipefail
+
+          if [[ "${TARGET_ENVIRONMENT}" == "stage" ]]; then
+            SOURCE_ENVIRONMENT="dev"
+          else
+            SOURCE_ENVIRONMENT="stage"
+          fi
+
+          source_file="charts/synchat/values-${SOURCE_ENVIRONMENT}.yaml"
+          test -f "${source_file}"
+
+          tag_count="$(awk '/^[[:space:]]+tag:/ { count++ } END { print count + 0 }' "${source_file}")"
+
+          if [[ "${tag_count}" -ne 3 ]]; then
+            echo "Expected exactly three image tags in ${source_file}; found ${tag_count}"
+            exit 1
+          fi
+
+          image_tag="$(awk '/^[[:space:]]+tag:/ { print $2; exit }' "${source_file}")"
+          unique_tag_count="$(awk '/^[[:space:]]+tag:/ { print $2 }' "${source_file}" | sort -u | wc -l | tr -d ' ' )"
+          if [[ "${unique_tag_count}" -ne 1 ]]; then
+            echo "The web, API, and crawler tags in ${source_file} do not match"
+            exit 1
+          fi
+
+          if ! printf '%s' "${image_tag}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "The source image tag must be a full 40-character Git commit SHA"
+            exit 1
+          fi
+
+          echo "source_environment=${SOURCE_ENVIRONMENT}" >> "${GITHUB_OUTPUT}"
+          echo "image_tag=${image_tag}" >> "${GITHUB_OUTPUT}"
+          echo "Promoting ${image_tag} from ${SOURCE_ENVIRONMENT} to ${TARGET_ENVIRONMENT}"
+
       - name: Update environment image tags
         env:
-          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_TAG: ${{ steps.release.outputs.image_tag }}
           ENVIRONMENT: ${{ inputs.environment }}
         working-directory: devops-repo
         run: |
@@ -43,11 +79,6 @@ jobs:
 
           values_file="charts/synchat/values-${ENVIRONMENT}.yaml"
           test -f "${values_file}"
-
-          if ! printf '%s' "${IMAGE_TAG}" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "image_tag must be a full 40-character Git commit SHA"
-            exit 1
-          fi
 
           sed -i -E "s/^    tag: .*/    tag: ${IMAGE_TAG}/" "${values_file}"
 
@@ -58,13 +89,14 @@ jobs:
         with:
           token: ${{ secrets.DEVOPS_REPO_TOKEN }}
           path: devops-repo
-          branch: promote/synchat-${{ inputs.environment }}-${{ inputs.image_tag }}
-          commit-message: "Promote Synchat ${{ inputs.image_tag }} to ${{ inputs.environment }}"
-          title: "Promote Synchat ${{ inputs.image_tag }} to ${{ inputs.environment }}"
+          branch: promote/synchat-${{ inputs.environment }}-${{ steps.release.outputs.image_tag }}
+          commit-message: "Promote Synchat ${{ steps.release.outputs.image_tag }} to ${{ inputs.environment }}"
+          title: "Promote Synchat ${{ steps.release.outputs.image_tag }} to ${{ inputs.environment }}"
           body: |
-            Promotes the already-built Synchat images to `${{ inputs.environment }}`.
+            Promotes the already-built Synchat images from
+            `${{ steps.release.outputs.source_environment }}` to `${{ inputs.environment }}`.
 
-            Image tag: `${{ inputs.image_tag }}`
+            Image tag: `${{ steps.release.outputs.image_tag }}`
 
             This PR changes only the environment image tag. Argo CD will deploy
             the change after this PR is reviewed and merged.
