@@ -62,3 +62,34 @@ jobs:
               --push \
               "cmd/${service}"
           done
+
+      - name: Check out deployment repository
+        uses: actions/checkout@v4
+        with:
+          repository: sandipan1/devops-for-ai
+          token: ${{ secrets.DEVOPS_REPO_TOKEN }}
+          path: devops-repo
+          ref: main
+
+      - name: Update development image tags
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        working-directory: devops-repo
+        run: |
+          set -euo pipefail
+
+          for file in charts/synchat/values.yaml charts/synchat/values-dev.yaml; do
+            sed -i -E "s/^    tag: .*/    tag: ${IMAGE_TAG}/" "${file}"
+          done
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add charts/synchat/values.yaml charts/synchat/values-dev.yaml
+
+          if git diff --cached --quiet; then
+            echo "Development image tags are already up to date."
+            exit 0
+          fi
+
+          git commit -m "Deploy Synchat ${IMAGE_TAG} to development"
+          git push origin main
