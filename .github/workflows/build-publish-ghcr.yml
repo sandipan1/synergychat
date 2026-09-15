@@ -20,6 +20,10 @@ jobs:
   build-and-publish:
     name: Build and publish container images
     runs-on: ubuntu-latest
+    env:
+      # The repository contains a legacy vendor directory, but new dependencies
+      # are resolved from go.mod/go.sum instead of expanding vendor in CI.
+      GOFLAGS: -mod=mod
 
     steps:
       - name: Check out repository

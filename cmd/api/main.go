@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type apiConfig struct {
@@ -53,6 +54,7 @@ func main() {
 	}))
 
 	router.Get("/healthz", handlerReadiness)
+	router.Handle("/metrics", promhttp.Handler())
 	router.Post("/messages", apiCfg.handlerCreateMessage)
 	router.Get("/messages", apiCfg.handlerGetMessages)
 
